@@ -9,14 +9,14 @@ use nom::{
     bytes::complete::{tag, take_until},
     character::complete,
     combinator::{all_consuming, complete, not, peek, recognize},
-    error::{ErrorKind, ParseError, VerboseError},
+    error::{ErrorKind, VerboseError},
     multi::many1,
     sequence::{delimited, preceded, terminated},
-    IResult, InputLength,
+    IResult,
 };
 
-/// Not sure how to get this from nom 5 so taking a stab at implemeting it myself.
-pub fn eoi<I: Copy + InputLength, E: ParseError<I>>(input: I) -> IResult<I, I, E> {
+/// Not sure how to get this from nom 5 so taking a stab at implementing it myself.
+pub fn eoi<I: Copy + nom::InputLength, E: nom::error::ParseError<I>>(input: I) -> IResult<I, I, E> {
     if input.input_len() == 0 {
         Ok((input, input))
     } else {
@@ -24,19 +24,42 @@ pub fn eoi<I: Copy + InputLength, E: ParseError<I>>(input: I) -> IResult<I, I, E
     }
 }
 
-pub fn prod_lhs<'a>(input: &'a str) -> IResult<&'a str, Term, VerboseError<&'a str>> {
-    let (input, nt) = delimited(
-        complete::char('<'),
-        take_until(">"),
-        terminated(complete::char('>'), complete::multispace0),
+/// Parse the [`Term`] on the LHS.
+pub fn prod_lhs(input: &str) -> IResult<&str, Term, VerboseError<&str>> {
+    let (input, nt) = nom::sequence::delimited(
+        nom::sequence::preceded(
+            nom::character::complete::multispace0,
+            nom::character::complete::char('<'),
+        ),
+        nom::bytes::complete::take_until(">"),
+        nom::sequence::terminated(
+            nom::character::complete::char('>'),
+            nom::character::complete::multispace0,
+        ),
     )(input)?;
-
-    let (input, _) = preceded(
-        complete::multispace0,
-        terminated(tag("::="), complete::multispace0),
-    )(input)?;
-
     Ok((input, Term::Nonterminal(nt.to_string())))
+}
+
+// Parse the equality sign in the middle.
+// TODO: There are multiple possible versions of the equality sign.
+// For instance, the Wikipedia here uses the `=` character.
+// Thus, we might want to introduce a customization point here in the future.
+// https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_form#Examples
+pub fn prod_eq(input: &str) -> IResult<&str, (), VerboseError<&str>> {
+    let (input, _) = nom::sequence::preceded(
+        nom::character::complete::multispace0,
+        nom::sequence::terminated(
+            nom::bytes::complete::tag("::="),
+            nom::character::complete::multispace0,
+        ),
+    )(input)?;
+    Ok((input, ()))
+}
+
+/// Parses the [`Term`] on the RHS.
+pub fn prod_rhs(input: &str) -> IResult<&str, Vec<Expression>, VerboseError<&str>> {
+    let (input, terms) = nom::multi::many1(nom::combinator::complete(expression))(input)?;
+    Ok((input, terms))
 }
 
 pub fn terminal<'a>(input: &'a str) -> IResult<&'a str, Term, VerboseError<&'a str>> {
@@ -125,11 +148,9 @@ pub fn expression_complete<'a>(
 }
 
 pub fn production<'a>(input: &'a str) -> IResult<&'a str, Production, VerboseError<&'a str>> {
-    let (input, lhs) = preceded(
-        complete::multispace0,
-        terminated(prod_lhs, complete::multispace0),
-    )(input)?;
-    let (input, rhs) = many1(complete(expression))(input)?;
+    let (input, lhs) = prod_lhs(input)?;
+    let (input, _) = prod_eq(input)?;
+    let (input, rhs) = prod_rhs(input)?;
     let (input, _) = preceded(
         complete::multispace0,
         terminated(
@@ -154,7 +175,6 @@ pub fn production_complete<'a>(
 }
 
 pub fn grammar<'a>(input: &'a str) -> IResult<&'a str, Grammar, VerboseError<&'a str>> {
-    let (input, _) = peek(production)(input)?;
     let (input, prods) = many1(complete(production))(input)?;
 
     Ok((input, Grammar::from_parts(prods)))
