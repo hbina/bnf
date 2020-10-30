@@ -9,7 +9,7 @@
 //!
 //! The following grammar from the [Wikipedia page on Backus-Naur form]
 //! (https://en.wikipedia.org/wiki/Backus%E2%80%93Naur_form#Example)
-//! exemplifies a compatible grammar. (*Note: parser allows for an optional ';'
+//! exemplifies a compatible grammar. (*Note: iso_14977 allows for an optional ';'
 //! to indicate the end of a producion)
 //!
 //! ```text
@@ -169,6 +169,7 @@ extern crate stacker;
 mod error;
 mod expression;
 mod grammar;
+pub mod iso_14977;
 mod parsers;
 mod production;
 mod term;
