@@ -1,11 +1,6 @@
 //! Common parsers for BNF-like text.
 //!
 
-use iso_14977::structure::{MetaIdentifier, Syntax, SyntaxRule};
-use iso_14977::symbols::Symbol;
-use nom::InputTakeAtPosition;
-use std::convert::TryFrom;
-
 pub type Result<'a> = nom::IResult<&'a str, &'a str, nom::error::VerboseError<&'a str>>;
 
 /// Parses the bytes between an opening and closing tag.
@@ -21,10 +16,10 @@ pub type Result<'a> = nom::IResult<&'a str, &'a str, nom::error::VerboseError<&'
 /// # use bnf::iso_14977::parsers::parse_between_tags;
 /// # fn main() -> Result<(), Box<dyn std::error::Error>>
 /// # {
-/// let (left, parsed) = parse_between_tags::<&str>("   \n\r\n\t <hello> \t\n\t\t\r abc", "<",">")?;
+/// let (left, parsed) = parse_between_tags("   \n\r\n\t <hello> \t\n\t\t\r abc", "<",">")?;
 /// assert_eq!(left, "abc");
 /// assert_eq!(parsed, "hello");
-/// let (left2, parsed2) = parse_between_tags::<&str>("    !@#$hello%^&* abc", "!@#$", "%^&*")?;
+/// let (left2, parsed2) = parse_between_tags("    !@#$hello%^&* abc", "!@#$", "%^&*")?;
 /// assert_eq!(left2, "abc");
 /// assert_eq!(parsed2, "hello");
 /// # Ok(())
@@ -62,7 +57,7 @@ pub fn parse_between_tags<'a, 'b>(
 /// # use bnf::iso_14977::parsers::parse_for_str;
 /// # fn main() -> Result<(), Box<dyn std::error::Error>>
 /// # {
-/// let (left, parsed) = parse_for_str::<&str>(" \r\n\t\n hello world", "hello")?;
+/// let (left, parsed) = parse_for_str(" \r\n\t\n hello world", "hello")?;
 /// assert_eq!(left, "world");
 /// assert_eq!(parsed, "hello");
 /// # Ok(())
@@ -74,12 +69,17 @@ pub fn parse_between_tags<'a, 'b>(
 /// 1.  Do not use this to parse `first-quote-symbol` or `second-quote-symbol` because this will possibly
 ///     skip the non-printing characters _inside_ the terminal-strings which _does have_ syntactic
 ///     meaning. Use [`parse_between_tags`] instead.
-pub fn parse_for_str<'a, 'b>(input: &'a str, expect: &'b str) -> Result<'a> {
+pub fn parse_for_str<'a, 'b>(
+    input: &'a str,
+    expect: &'b str,
+) -> nom::IResult<&'a str, String, nom::error::VerboseError<&'a str>> {
     let (input_leftover, matched) = nom::sequence::preceded(
         parse_gap_separator,
         nom::sequence::terminated(nom::bytes::complete::tag(expect), parse_gap_separator),
     )(input)?;
-    Ok((input_leftover, matched))
+    let result = String::from(matched);
+    println!("parsed for str => {}", result);
+    Ok((input_leftover, result))
 }
 
 /// Parses for the given character skipping `gap-separator`s.
@@ -90,12 +90,14 @@ pub fn parse_for_str<'a, 'b>(input: &'a str, expect: &'b str) -> Result<'a> {
 pub fn parse_for_char(
     input: &str,
     expect: char,
-) -> nom::IResult<&str, char, nom::error::VerboseError<&str>> {
+) -> nom::IResult<&str, String, nom::error::VerboseError<&str>> {
     let (input_leftover, matched) = nom::sequence::preceded(
         parse_gap_separator,
         nom::sequence::terminated(nom::character::complete::char(expect), parse_gap_separator),
     )(input)?;
-    Ok((input_leftover, matched))
+    let result = format!("{}", matched);
+    println!("parsed for char => {}", result);
+    Ok((input_leftover, result))
 }
 
 /// Parse for a sequence of gap-separators.
@@ -110,7 +112,7 @@ pub fn parse_for_char(
 /// # use bnf::iso_14977::parsers::parse_gap_separator;
 /// # fn main() -> Result<(), Box<dyn std::error::Error>>
 /// # {
-/// let (left, parsed) = parse_gap_separator::<&str>(" \r\n\t\n\u{000B}")?;
+/// let (left, parsed) = parse_gap_separator(" \r\n\t\n\u{000B}")?;
 /// assert_eq!(left, "");
 /// assert_eq!(parsed, " \r\n\t\n\u{000B}");
 /// # Ok(())
@@ -152,7 +154,7 @@ pub fn is_gap_separator(chr: char) -> bool {
 /// it is alphanumeric.
 pub fn parse_meta_identifier(
     input: &str,
-) -> nom::IResult<&str, MetaIdentifier, nom::error::VerboseError<&str>> {
+) -> nom::IResult<&str, String, nom::error::VerboseError<&str>> {
     let (input_leftover, matched) = nom::sequence::delimited(
         parse_gap_separator,
         nom::sequence::pair(
@@ -161,39 +163,107 @@ pub fn parse_meta_identifier(
         ),
         parse_gap_separator,
     )(input)?;
-    Ok((
-        input_leftover,
-        MetaIdentifier::from(format!("{}{}", matched.0, matched.1)),
-    ))
+    let result = format!("{}{}", matched.0, matched.1);
+    println!("parsed meta identifier => {}", result);
+    Ok((input_leftover, result))
 }
 
-/// Parse for a specific `symbol`.
-///
-/// See [`Symbol`].
-pub fn parse_symbol(
+pub fn parse_definition_lists(
     input: &str,
-    symbol: Symbol,
-) -> nom::IResult<&str, Symbol, nom::error::VerboseError<&str>> {
-    let (input_leftover, matched) = parse_for_str(input, Into::into(symbol))?;
-    Ok((input_leftover, Symbol::try_from(matched).unwrap()))
+) -> nom::IResult<&str, Vec<String>, nom::error::VerboseError<&str>> {
+    let (input_leftover, matched) = nom::multi::many0(parse_single_definition)(input)?;
+    println!("parsed definition list => {:?}", matched);
+    Ok((input_leftover, matched))
+}
+
+pub fn parse_single_definition(
+    input: &str,
+) -> nom::IResult<&str, String, nom::error::VerboseError<&str>> {
+    let (input_leftover, matched) = nom::sequence::terminated(
+        nom::sequence::delimited(
+            parse_gap_separator,
+            nom::branch::alt((
+                parse_terminal_string,
+                parse_meta_identifier,
+                parse_between_tags("{", "}"),
+            )),
+            parse_gap_separator,
+        ),
+        // FIXME: This will currently fail on the last single-definition.
+        nom::branch::alt((
+            nom::character::complete::char('|'),
+            nom::character::complete::char(';'),
+            nom::character::complete::char(','),
+            nom::character::complete::char('*'),
+            nom::character::complete::char('-'),
+        )),
+    )(input)?;
+    let result = String::from(matched);
+    println!("parsed single definition => {}", result);
+    Ok((input_leftover, result))
+}
+
+pub fn parse_terminal_string(
+    input: &str,
+) -> nom::IResult<&str, String, nom::error::VerboseError<&str>> {
+    let (input_leftover, matched) = nom::sequence::delimited(
+        parse_gap_separator,
+        nom::branch::alt((
+            nom::sequence::delimited(
+                nom::character::complete::char('"'),
+                nom::bytes::complete::take_until("\""),
+                nom::character::complete::char('"'),
+            ),
+            nom::sequence::delimited(
+                nom::character::complete::char('\''),
+                nom::bytes::complete::take_until("'"),
+                nom::character::complete::char('\''),
+            ),
+        )),
+        parse_gap_separator,
+    )(input)?;
+    let result = String::from(matched);
+    println!("parsed terminal string => {}", result);
+    Ok((input_leftover, result))
 }
 
 /// Parse for a `syntax-rule`.
 pub fn parse_syntax_rule(
     input: &str,
-) -> nom::IResult<&str, SyntaxRule, nom::error::VerboseError<&str>> {
+) -> nom::IResult<&str, String, nom::error::VerboseError<&str>> {
     let (input, matched_meta_identifier) = parse_meta_identifier(input)?;
-    let (input, _) = parse_symbol(input, Symbol::DefinitionSeparator)?;
-    let (input, rest) = nom::bytes::complete::take_while(is_gap_separator)(input)?;
-    Ok((input, SyntaxRule::from(rest)))
+    let (input, _) = parse_for_char(input, '=')?;
+    let (input, definitions_list) = parse_definition_lists(input)?;
+    let result = format!("{} --> {:?}", matched_meta_identifier, definitions_list);
+    println!("parsed a syntax rule => {}", result);
+    Ok((input, result))
 }
 
-pub fn parse_syntax(input: &str) -> nom::IResult<&str, Syntax, nom::error::VerboseError<&str>> {
+pub fn parse_syntax(
+    input: &str,
+) -> nom::IResult<&str, Vec<String>, nom::error::VerboseError<&str>> {
     let (input_leftover, matched) = nom::multi::many0(parse_syntax_rule)(input)?;
-    Ok((input_leftover, Syntax::from(matched)))
+    Ok((input_leftover, matched))
 }
 
-pub fn parse_ebnf(input: &str) -> nom::IResult<&str, Syntax, nom::error::VerboseError<&str>> {
+pub fn parse_ebnf(input: &str) -> nom::IResult<&str, Vec<String>, nom::error::VerboseError<&str>> {
     let (input, g) = nom::combinator::all_consuming(parse_syntax)(input)?;
+    println!("syntax:\n{:?}", g);
     Ok((input, g))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parsing_syntax() {
+        let syntax = r#"letter = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" |
+        "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" |
+        "Z";
+        vowel = "A" | "E" | "I" | "O" | "U";
+        consonant = letter - vowel;
+        ee = {"A"}-, "E";"#;
+        parse_ebnf(syntax).unwrap();
+    }
 }
