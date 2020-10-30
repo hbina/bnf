@@ -1,6 +1,10 @@
 //! Common parsers for BNF-like text.
 //!
 
+use nom::{InputIter, Slice, AsChar};
+use nom::error::ParseError;
+use std::ops::RangeFrom;
+
 pub type Result<'a> = nom::IResult<&'a str, &'a str, nom::error::VerboseError<&'a str>>;
 
 /// Parses the bytes between an opening and closing tag.
@@ -182,11 +186,7 @@ pub fn parse_single_definition(
     let (input_leftover, matched) = nom::sequence::terminated(
         nom::sequence::delimited(
             parse_gap_separator,
-            nom::branch::alt((
-                parse_terminal_string,
-                parse_meta_identifier,
-                parse_between_tags("{", "}"),
-            )),
+            nom::branch::alt((parse_terminal_string, parse_meta_identifier)),
             parse_gap_separator,
         ),
         // FIXME: This will currently fail on the last single-definition.
@@ -203,6 +203,20 @@ pub fn parse_single_definition(
     Ok((input_leftover, result))
 }
 
+pub fn parse_literal<I, Error: ParseError<I>>(c: char) -> impl Fn(I) -> nom::IResult<I, char, Error>
+where
+    I: Slice<RangeFrom<usize>> + InputIter,
+    <I as InputIter>::Item: AsChar,
+{
+    move |i: I| match (i).iter_elements().next().map(|t| {
+        let b = t.as_char() == c;
+        (&c, b)
+    }) {
+        Some((c, true)) => Ok((i.slice(c.len()..), c.as_char())),
+        _ => Err(Err::Error(Error::from_char(i, c))),
+    }
+}
+
 pub fn parse_terminal_string(
     input: &str,
 ) -> nom::IResult<&str, String, nom::error::VerboseError<&str>> {
@@ -211,7 +225,7 @@ pub fn parse_terminal_string(
         nom::branch::alt((
             nom::sequence::delimited(
                 nom::character::complete::char('"'),
-                nom::bytes::complete::take_until("\""),
+                parse_literal,
                 nom::character::complete::char('"'),
             ),
             nom::sequence::delimited(
@@ -264,6 +278,12 @@ mod tests {
         vowel = "A" | "E" | "I" | "O" | "U";
         consonant = letter - vowel;
         ee = {"A"}-, "E";"#;
+        parse_ebnf(syntax).unwrap();
+    }
+
+    #[test]
+    fn test_escape_quote() {
+        let syntax = r#"letter = "\"" | "A";"#;
         parse_ebnf(syntax).unwrap();
     }
 }
