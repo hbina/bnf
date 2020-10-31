@@ -1,8 +1,8 @@
 //! Common parsers for BNF-like text.
 //!
 
-use nom::{InputIter, Slice, AsChar};
 use nom::error::ParseError;
+use nom::{AsChar, InputIter, Slice};
 use std::ops::RangeFrom;
 
 pub type Result<'a> = nom::IResult<&'a str, &'a str, nom::error::VerboseError<&'a str>>;
@@ -213,7 +213,7 @@ where
         (&c, b)
     }) {
         Some((c, true)) => Ok((i.slice(c.len()..), c.as_char())),
-        _ => Err(Err::Error(Error::from_char(i, c))),
+        _ => Err(nom::Err::Error(Error::from_char(i, c))),
     }
 }
 
@@ -225,7 +225,7 @@ pub fn parse_terminal_string(
         nom::branch::alt((
             nom::sequence::delimited(
                 nom::character::complete::char('"'),
-                parse_literal,
+                nom::bytes::complete::take_until("'"),
                 nom::character::complete::char('"'),
             ),
             nom::sequence::delimited(
